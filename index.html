@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>食物鏈與食物網學習</title>
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: "Microsoft JhengHei", "PingFang TC", sans-serif;
+        display: flex;
+        height: 100vh;
+        background-color: #f4f7f6;
+        overflow: hidden;
+    }
+
+    /* 左側工作區 */
+    #workspace {
+        flex: 1;
+        position: relative;
+        background-color: #ffffff;
+        background-image: radial-gradient(#e0e0e0 1px, transparent 1px);
+        background-size: 20px 20px;
+        box-shadow: inset -2px 0 10px rgba(0,0,0,0.05);
+    }
+
+    /* 右側紀錄區 */
+    #sidebar {
+        width: 320px;
+        background-color: #2c3e50;
+        color: white;
+        padding: 20px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
+
+    #sidebar h2 {
+        margin-top: 0;
+        font-size: 1.2rem;
+        border-bottom: 2px solid #1abc9c;
+        padding-bottom: 10px;
+    }
+
+    #chain-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        overflow-y: auto;
+    }
+
+    #chain-list li {
+        background-color: #34495e;
+        margin-bottom: 10px;
+        padding: 12px;
+        border-radius: 6px;
+        font-size: 0.95rem;
+        animation: fadeIn 0.5s ease-in-out;
+        border-left: 4px solid #1abc9c;
+        cursor: grab; /* 提示可拖曳 */
+        transition: transform 0.2s, background-color 0.2s;
+        user-select: none;
+    }
+
+    #chain-list li:active {
+        cursor: grabbing;
+    }
+
+    #chain-list li.dragging {
+        opacity: 0.5;
+        background-color: #1abc9c;
+        transform: scale(0.98);
+    }
+
+    #chain-list li.drag-over {
+        border-top: 2px dashed #f1c40f;
+    }
+
+    .index {
+        font-weight: bold;
+        color: #f1c40f;
+        margin-right: 5px;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateX(20px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* 畫線用的 SVG 層 */
+    #svg-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    path {
+        fill: none;
+        stroke: #3498db;
+        stroke-width: 4;
+        stroke-linecap: round;
+        transition: stroke 0.3s;
+    }
+
+    path.temp-line {
+        stroke: #95a5a6;
+        stroke-dasharray: 5, 5;
+    }
+
+    /* 生物節點 */
+    .node {
+        position: absolute;
+        width: 70px;
+        height: 70px;
+        background: white;
+        border: 3px solid #bdc3c7;
+        border-radius: 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: grab;
+        user-select: none;
+        z-index: 2;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: border-color 0.2s;
+    }
+
+    .node:active {
+        cursor: grabbing;
+    }
+
+    .node:hover {
+        border-color: #1abc9c;
+    }
+
+    .node-img {
+        font-size: 30px;
+        line-height: 1;
+    }
+
+    .node-name {
+        font-size: 12px;
+        font-weight: bold;
+        color: #333;
+        margin-top: 2px;
+    }
+
+    /* 拖拉連線的小圓點 */
+    .connector {
+        position: absolute;
+        right: -8px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 16px;
+        background-color: #3498db;
+        border: 2px solid white;
+        border-radius: 50%;
+        cursor: crosshair;
+        z-index: 3;
+    }
+    
+    .connector:hover {
+        background-color: #2980b9;
+        transform: translateY(-50%) scale(1.2);
+    }
+</style>
+</head>
+<body>
+
+<div id="workspace">
+    <svg id="svg-layer">
+        <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#3498db" />
+            </marker>
+        </defs>
+        <g id="lines-group"></g>
+        <path id="temp-line" class="temp-line" marker-end="url(#arrow)" style="display: none;"></path>
+    </svg>
+</div>
+
+<div id="sidebar">
+    <h2>🏆 已完成的食物鏈</h2>
+    <ul id="chain-list">
+        <!-- 完成的紀錄會出現在這裡 -->
+    </ul>
+</div>
+
+<script>
+    // 1. 定義生物資料與初始位置 (整齊排列在左側)
+    const organisms = [
+        { id: 'grass', name: '草', icon: '🌿', x: 30, y: 30 },
+        { id: 'grasshopper', name: '蚱蜢', icon: '🦗', x: 130, y: 30 },
+        { id: 'butterfly', name: '蝴蝶', icon: '🦋', x: 30, y: 130 },
+        { id: 'mantis', name: '螳螂', icon: '🪲', x: 130, y: 130 }, // 更換為🪲以區別蚱蜢
+        { id: 'rabbit', name: '兔子', icon: '🐇', x: 30, y: 230 },
+        { id: 'lizard', name: '蜥蜴', icon: '🦎', x: 130, y: 230 },
+        { id: 'frog', name: '青蛙', icon: '🐸', x: 30, y: 330 },
+        { id: 'snake', name: '蛇', icon: '🐍', x: 130, y: 330 },
+        { id: 'eagle', name: '鷹', icon: '🦅', x: 30, y: 430 }
+    ];
+
+    // 2. 定義合法的連線 (被吃關係：[被吃者, 捕食者])
+    const validEdges = [
+        ['grass', 'butterfly'],
+        ['grass', 'grasshopper'],
+        ['grass', 'rabbit'],
+        ['butterfly', 'frog'],
+        ['butterfly', 'mantis'],
+        ['butterfly', 'lizard'],
+        ['mantis', 'frog'],
+        ['mantis', 'lizard'],
+        ['lizard', 'snake'],
+        ['grasshopper', 'lizard'],
+        ['frog', 'eagle'],
+        ['frog', 'snake'],
+        ['snake', 'eagle'],
+        ['rabbit', 'snake'],
+        ['rabbit', 'eagle']
+    ];
+
+    // 3. 定義需要偵測的目標食物鏈
+    const targetChains = [
+        ['grass', 'butterfly', 'frog', 'eagle'],
+        ['grass', 'butterfly', 'frog', 'snake', 'eagle'],
+        ['grass', 'butterfly', 'mantis', 'frog', 'eagle'],
+        ['grass', 'butterfly', 'mantis', 'frog', 'snake', 'eagle'],
+        ['grass', 'butterfly', 'mantis', 'lizard', 'snake', 'eagle'],
+        ['grass', 'butterfly', 'lizard', 'snake', 'eagle'],
+        ['grass', 'grasshopper', 'lizard', 'snake', 'eagle'],
+        ['grass', 'rabbit', 'snake', 'eagle'],
+        ['grass', 'rabbit', 'eagle']
+    ];
+
+    const workspace = document.getElementById('workspace');
+    const linesGroup = document.getElementById('lines-group');
+    const tempLine = document.getElementById('temp-line');
+    const chainList = document.getElementById('chain-list');
+
+    let currentEdges = []; 
+    let completedChainsIndices = new Set(); 
+    const nodeRadius = 35; 
+
+    // 初始化：生成生物節點
+    organisms.forEach(org => {
+        const node = document.createElement('div');
+        node.className = 'node';
+        node.id = org.id;
+        node.style.left = org.x + 'px';
+        node.style.top = org.y + 'px';
+        
+        // 修改這裡：嘗試讀取圖片，若找不到圖片檔，會自動切換回原本的 Emoji
+        node.innerHTML = `
+            <div class="node-img">
+                <img src="${org.id}.png" alt="${org.name}" style="width: 40px; height: 40px; object-fit: contain; pointer-events: none; user-select: none;" onerror="this.onerror=null; this.outerHTML='${org.icon}';">
+            </div>
+            <div class="node-name">${org.name}</div>
+            <div class="connector" data-id="${org.id}"></div>
+        `;
+        workspace.appendChild(node);
+        makeDraggable(node);
+    });
+
+    // 處理節點拖曳
+    function makeDraggable(element) {
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+
+        element.addEventListener('mousedown', (e) => {
+            if(e.target.classList.contains('connector')) return;
+            
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            initialLeft = element.offsetLeft;
+            initialTop = element.offsetTop;
+            element.style.zIndex = 3;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            element.style.left = (initialLeft + dx) + 'px';
+            element.style.top = (initialTop + dy) + 'px';
+            updateAllLines(); 
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                element.style.zIndex = 2;
+            }
+        });
+    }
+
+    // 處理畫線邏輯
+    let isDrawing = false;
+    let sourceNodeId = null;
+
+    workspace.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('connector')) {
+            isDrawing = true;
+            sourceNodeId = e.target.getAttribute('data-id');
+            tempLine.style.display = 'block';
+            updateTempLine(e.clientX, e.clientY);
+        }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDrawing) return;
+        updateTempLine(e.clientX, e.clientY);
+    });
+
+    window.addEventListener('mouseup', (e) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        tempLine.style.display = 'none';
+
+        tempLine.style.pointerEvents = 'none';
+        let targetElement = document.elementFromPoint(e.clientX, e.clientY);
+        const targetNode = targetElement ? targetElement.closest('.node') : null;
+
+        if (targetNode) {
+            const targetNodeId = targetNode.id;
+            if (sourceNodeId !== targetNodeId) {
+                attemptConnection(sourceNodeId, targetNodeId);
+            }
+        }
+        sourceNodeId = null;
+    });
+
+    function getCurvedPath(fromId, toId) {
+        const fromNode = document.getElementById(fromId);
+        const toNode = document.getElementById(toId);
+        
+        const x1 = fromNode.offsetLeft + nodeRadius;
+        const y1 = fromNode.offsetTop + nodeRadius;
+        const x2 = toNode.offsetLeft + nodeRadius;
+        const y2 = toNode.offsetTop + nodeRadius;
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const cx = (x1 + x2) / 2 - dy * 0.2;
+        const cy = (y1 + y2) / 2 + dx * 0.2;
+
+        const angle = Math.atan2(y2 - cy, x2 - cx);
+        const targetX = x2 - nodeRadius * Math.cos(angle);
+        const targetY = y2 - nodeRadius * Math.sin(angle);
+
+        return `M ${x1} ${y1} Q ${cx} ${cy} ${targetX} ${targetY}`;
+    }
+
+    function updateTempLine(mouseX, mouseY) {
+        if (!sourceNodeId) return;
+        const fromNode = document.getElementById(sourceNodeId);
+        const x1 = fromNode.offsetLeft + nodeRadius;
+        const y1 = fromNode.offsetTop + nodeRadius;
+        
+        const dx = mouseX - x1;
+        const dy = mouseY - y1;
+        const cx = (x1 + mouseX) / 2 - dy * 0.1;
+        const cy = (y1 + mouseY) / 2 + dx * 0.1;
+
+        tempLine.setAttribute('d', `M ${x1} ${y1} Q ${cx} ${cy} ${mouseX} ${mouseY}`);
+    }
+
+    function attemptConnection(fromId, toId) {
+        const isValid = validEdges.some(edge => edge[0] === fromId && edge[1] === toId);
+        const isDuplicate = currentEdges.some(edge => edge.from === fromId && edge.to === toId);
+
+        if (isValid && !isDuplicate) {
+            currentEdges.push({ from: fromId, to: toId });
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('id', `line-${fromId}-${toId}`);
+            path.setAttribute('marker-end', 'url(#arrow)');
+            path.setAttribute('d', getCurvedPath(fromId, toId));
+            linesGroup.appendChild(path);
+
+            checkChains();
+        } else if (!isValid) {
+            console.log("連線失敗：該生物不吃這個！");
+        }
+    }
+
+    function updateAllLines() {
+        currentEdges.forEach(edge => {
+            const path = document.getElementById(`line-${edge.from}-${edge.to}`);
+            if (path) {
+                path.setAttribute('d', getCurvedPath(edge.from, edge.to));
+            }
+        });
+    }
+
+    function checkChains() {
+        targetChains.forEach((chain, index) => {
+            if (completedChainsIndices.has(index)) return;
+
+            let isChainComplete = true;
+            for (let i = 0; i < chain.length - 1; i++) {
+                const from = chain[i];
+                const to = chain[i + 1];
+                const edgeExists = currentEdges.some(e => e.from === from && e.to === to);
+                if (!edgeExists) {
+                    isChainComplete = false;
+                    break;
+                }
+            }
+
+            if (isChainComplete) {
+                completedChainsIndices.add(index);
+                displayCompletedChain(chain);
+            }
+        });
+    }
+
+    // 處理右側列表拖曳排序與自動編號
+    let chainCount = 0;
+    let draggedLi = null;
+
+    function displayCompletedChain(chainArray) {
+        chainCount++;
+        const names = chainArray.map(id => organisms.find(org => org.id === id).name);
+        
+        const li = document.createElement('li');
+        li.draggable = true; // 設為可拖曳
+        li.innerHTML = `<span class="index">${chainCount}.</span> <span class="chain-text">${names.join(' → ')}</span>`;
+        
+        addDragEvents(li);
+        chainList.appendChild(li);
+    }
+
+    function addDragEvents(li) {
+        li.addEventListener('dragstart', function(e) {
+            draggedLi = this;
+            e.dataTransfer.effectAllowed = 'move';
+            // 延遲添加class，讓瀏覽器抓到原本的樣子當作拖曳縮圖
+            setTimeout(() => this.classList.add('dragging'), 0); 
+        });
+
+        li.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        });
+
+        li.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            if (this !== draggedLi) {
+                this.classList.add('drag-over');
+            }
+        });
+
+        li.addEventListener('dragleave', function(e) {
+            this.classList.remove('drag-over');
+        });
+
+        li.addEventListener('drop', function(e) {
+            e.stopPropagation();
+            this.classList.remove('drag-over');
+            
+            if (draggedLi !== this) {
+                // 判斷拖曳目標是在該元素的前面還是後面
+                let listArray = Array.from(chainList.children);
+                let draggedIndex = listArray.indexOf(draggedLi);
+                let targetIndex = listArray.indexOf(this);
+
+                if (draggedIndex < targetIndex) {
+                    this.after(draggedLi);
+                } else {
+                    this.before(draggedLi);
+                }
+                updateListNumbers(); // 重新編號
+            }
+            return false;
+        });
+
+        li.addEventListener('dragend', function(e) {
+            this.classList.remove('dragging');
+        });
+    }
+
+    // 重新排序前方數字
+    function updateListNumbers() {
+        const lis = chainList.querySelectorAll('li');
+        lis.forEach((item, index) => {
+            item.querySelector('.index').textContent = `${index + 1}.`;
+        });
+    }
+</script>
+
+</body>
+</html>
